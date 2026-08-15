@@ -1,1 +1,131 @@
-PASTE-YOUR-DEPLOYED-PAPER-URL-HERE
+FlyRank ML Internship · Capstone Research Paper
+Which pages should you refresh first? Scoring content decline on 79M rows of real search data.
+A validated, honestly-scored model for ranking a content portfolio by decline risk — built to beat a transparent rule baseline, tested on clients it has never seen, and reported with its actual limits attached.
+
+Abstract
+Content teams can't review every page every week, so the question is which pages to look at first. We built a binary classifier that ranks FlyRank warehouse content by short-term decline risk, using five features knowable before the decision moment (impressions, clicks, CTR, position, and active days over a 15-day window). Logistic Regression, evaluated on a client-holdout split, reached Precision@50 of 0.700 against a rule-based baseline's 0.380 and a random-order floor of 0.295. Re-evaluated under an honest, grouped split rather than a random one, the model's discrimination (ROC-AUC) dropped from 0.587 to 0.474 — below chance on a client it had never seen — while its ranking precision held up better (0.500 vs. 0.600). This paper reports both results plainly: the model adds real, measurable value at the top of a ranked queue, and it is not yet reliable evidence of true cross-client generalization. It is presented as a decision-support triage aid, always paired with human review, never as an automated decision-maker.
+
+Lane: Refresh / Content Opportunity Scoring
+Dataset: FlyRank ML Internship warehouse, March 2026
+Repo: github.com/irene501/flyrank
+01 · Introduction
+The problem: too many pages, one reviewer, one week
+A content team can realistically review about 50 pages a week by hand. A portfolio this size has tens of thousands. The cost of a wrong call runs both directions: reviewing a page that was never actually declining wastes a scarce hour, while missing a real decliner means it drifts further before anyone notices. The task, framed precisely, is a triage problem — rank pages by decline risk, so a human's limited attention goes to the right 50 first — not a prediction of Google's algorithm and not a fully automated action.
+
+02 · Data
+Data
+This study uses the FlyRank ML Internship warehouse release — production-scale Google Search Console performance data, queried directly from a Hugging Face-hosted Parquet store via DuckDB, not the small anonymized starter sample used only for early framing. w03§data-contract
+
+~120K
+content items with usable March 1-15 volume
+March '26
+reporting window used
+29.5%
+base decline rate in the label window
+Windows
+Every feature is aggregated over March 1–15 (the "h1" window) — strictly before the decision moment. The label compares total impressions in that window against March 16–31 (the "h2" window): a page is labeled declining if h2 impressions fall below 80% of h1. Features and label never share a day.
+
+What was excluded, and why
+Anything from the h2 window in feature form — it's the label's own input; using it is leakage, demonstrated directly in Section 4.
+FlyRank's own product flags (health score, priority score, action type) — these encode a decision the platform already made, not a fact about the world; usable only as a baseline to beat, never as a feature.
+Client and content IDs — pseudonymous hashes, used only for grouping the train/test split, never as model inputs.
+Any client-identifying detail — this paper and its underlying notebooks contain no client names, URLs, or raw queries.
+03 · Methodology
+Methodology
+Features and label
+Five features, all aggregated over the h1 window: imp_h1 (impressions), clicks_h1, ctr_h1, avg_position_h1, and active_days_h1 (distinct days with any impressions). The label, is_declining_proxy, is a single sentence: impressions in the second half of March fell below 80% of the first half. w03§leakage-check
+
+Baseline
+Before any model, a transparent hand-written rule: pages ranked 11–20 ("striking distance") are flagged as quick-win candidates; page-one pages (1–10) with below-median CTR for their tier are flagged as CTR-fix candidates; everything else is monitor-only. w04§baseline
+
+Validation design
+Rows are grouped by client, not shuffled individually. A random row-level split would let the model see other pages from the same client in training and get tested on a held-out page from that same client — leakage through the client, not genuine generalization. The reported split holds out 20% of clients entirely, so every test-set client is one the model never saw during training.
+
+Leakage audit
+We deliberately smuggled the label's own input (imp_h2) into the feature set as a trap. ROC-AUC jumped from an honest 0.584 to a leaky 1.000 — confirming both that the test harness correctly detects leakage, and that the final, shipped feature set contains none. w06§leakage-audit
+
+04 · Results
+Model vs. baseline, same split, same metric
+Three models were compared against the rule baseline and a random-order floor, all scored on the identical client-holdout test rows.
+
+Precision@50 and ROC-AUC, client-holdout split · source: w05_model.ipynb
+Model	P@20	P@50	P@100	ROC-AUC
+Random order (base rate)	0.295	0.295	0.295	0.50
+Baseline rule	0.450	0.380	0.320	0.51
+Logistic Regression	0.750	0.700	0.720	0.54
+Decision Tree	0.250	0.500	0.570	0.61
+Random Forest	0.650	0.660	0.620	0.62
+Random order
+0.295
+Baseline rule
+0.380
+Logistic Regression
+0.700
+Decision Tree
+0.500
+Random Forest
+0.660
+Precision@50: of the top 50 pages each method ranks highest-risk, this fraction were confirmed declining. Logistic Regression nearly doubles the baseline rule.
+
+The complexity didn't earn its keep
+The plan going in was "readable model first, add complexity only if it earns it." It didn't: Logistic Regression — the simplest model tried — won on the metric this lane actually optimizes (Precision@50), beating both the Decision Tree and Random Forest. Random Forest and the Decision Tree score higher on ROC-AUC, a different, whole-ranking measure — a genuine tension worth naming rather than picking whichever number favors a cleaner story. For a reviewer who only ever looks at the top of a ranked queue, Precision@50 is the more decision-relevant number, so Logistic Regression is the model this paper carries forward.
+
+Errors, by position tier
+The Logistic Regression's overall test accuracy was 0.458 — lower than a naive "always predict stable" guess would score (~0.70), by design: class_weight="balanced" trades raw accuracy for better recall on the minority (declining) class, which matters more for a review queue than accuracy alone. Accuracy was weakest and roughly flat across positions 1–3, 4–10, and 11–20 (0.41–0.43), and clearly best on 21+ (0.545) — the model struggles fairly uniformly across every better-ranked tier, not one specific one. w05§errors
+
+05 · Limitations & Honest Framing
+What this work cannot claim
+The central honest finding
+A second, independent check — re-running the same model once on a naive random split and once on the honest client-holdout split — surfaced the sharpest limitation in this paper. Under the random split, ROC-AUC read 0.587. Under the honest, client-grouped split, it dropped to 0.474 — below 0.5, effectively no better than random ranking on a client the model had never seen. Precision@50 held up better (0.600 vs. 0.500) but still fell. w06§before-after
+
+Random split
+0.587
+Client-holdout
+0.474
+ROC-AUC, same model, same features — only the split changed. The gap is how much of the random-split score was the model quietly memorizing client identity rather than learning a generalizable pattern.
+
+Read together with the Precision@50 result in Section 4, the honest conclusion is narrower than a single headline number would suggest: this model adds real, measurable value at the very top of a ranked queue (the pages a reviewer actually gets to), and is not yet strong evidence of reliable discrimination across a portfolio broadly, or on a genuinely new client. Other limits:
+
+The label (is_declining_proxy) is a one-month, two-half comparison — a directional, short-window signal, not a validated long-term trend.
+All findings are observational. Nothing here supports a causal claim ("refreshing X will cause Y") — only "pages with pattern A are associated with outcome B in this portfolio."
+Two of the four signals tested in an earlier audit did not behave as hypothesized: search position was only weakly related to decline (MIXED), and low prior activity was associated with lower decline, not higher (OPPOSITE of the hypothesis) — a useful negative result, reported rather than hidden. w04§signals
+Generalization to a client with no March 2026 history at all is untested.
+06 · Ranked Recommendations
+What a reviewer should do first
+Given the limits above, the model is used as a secondary signal that raises or lowers confidence on top of the transparent baseline rule — never alone.
+
+TIER 1 · high_confidence_decline
+Rule and model agree
+Review this week. The one case where two independent, differently-built signals point the same direction — the strongest evidence this paper produces.
+
+TIER 2 · quick_win_zone / low_ctr_for_position
+Baseline rule flags alone
+Review for push (positions 11–20) or CTR review (page one, under-converting). Backed by the transparent, auditable rule — confirmed by the signal audit's flag-linked test.
+
+TIER 3 · model_flag_only
+Model flags alone
+Watch list, not action list. Given the honest-split result in Section 5, a model-only flag is the weakest tier of evidence here and should not trigger review on its own.
+
+What should never be automated
+Auto-publishing or auto-unpublishing any page from this queue
+Auto-sending client-facing communications generated from this output
+Scoring individual writers or editors using this queue
+Billing or contract decisions based on these numbers
+Treating any single flagged row as proof that page will keep declining
+07 · Reproducibility
+Rerun this from a fresh clone
+Every number on this page traces back to a notebook in the repo below. Each notebook is self-contained and re-derives its inputs from the warehouse directly — clone the repo, add your own Hugging Face read token, and run top to bottom.
+
+w01 · research question
+w02 · ML task framing
+w03 · data contract
+w03 · leakage check
+w04 · signal audit
+w04 · baseline score
+w05 · model
+w06 · validation audit
+w07 · action playbook
+capstone · full writeup
+Random seed 42 throughout. Full environment in requirements.txt.
+
+Built on the FlyRank ML Internship dataset — flyrank.aiPASTE-YOUR-DEPLOYED-PAPER-URL-HERE
